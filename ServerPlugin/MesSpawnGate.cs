@@ -100,29 +100,39 @@ internal static class MesSpawnGate
 
         harmony.Patch(getSpawnPlacement, postfix: new HarmonyMethod(typeof(MesSpawnGate), nameof(Postfix)));
         Active = true;
-        Log.Info($"MES spawn placements gated: cell {Pattern.CellSize} m, gap {Pattern.Gap} m, jitter {Pattern.Jitter}, seed {Pattern.Seed}, " +
+        string gapSource = config.Gap > 0 ? "set in metres" : $"{config.GapSyncDistances} x sync distance {MyLayers.GetSyncDistance()} m";
+        Log.Info($"MES spawn placements gated: cell {Pattern.CellSize} m, gap {Pattern.Gap} m ({gapSource}), jitter {Pattern.Jitter}, seed {Pattern.Seed}, " +
+                 $"pattern fingerprint {Pattern.Fingerprint}, " +
                  $"at most {config.MaxNpcGridsInRadius} NPC grids within {config.DensityRadius} m, cluster cap {config.MaxClusterNpcGrids}, " +
                  $"census {(NpcCensus.ClusterWide ? "cluster-wide" : "this process only")}");
     }
 
-    /// <summary>Applies the config; false (and a Critical line) when it cannot form a pattern.</summary>
+    /// <summary>
+    /// Builds the cell pattern from the config; false (and a Critical line) when it cannot form one. Called
+    /// once, at install: every node of a cluster must cut space the same way, so a changed pattern setting
+    /// takes effect at the next start, when all nodes read the same profile.
+    /// </summary>
     public static bool Configure(Config config)
     {
-        double gap = config.Gap > 0 ? config.Gap : config.GapSyncDistances * MyLayers.GetSyncDistance();
         try
         {
-            Pattern = new CellPattern(config.CellSize, gap, config.Jitter, config.Seed);
+            Pattern = CellPattern.FromSettings(config.CellSize, config.Gap, config.GapSyncDistances, MyLayers.GetSyncDistance(),
+                config.Jitter, config.Seed);
         }
         catch (ArgumentOutOfRangeException e)
         {
             Active = false;
-            Log.Critical($"Invalid spawn pattern (cell {config.CellSize} m, gap {gap} m, jitter {config.Jitter}): {e.Message}. MES runs UNGATED");
+            Log.Critical($"Invalid spawn pattern (cell {config.CellSize} m, gap {config.Gap} m or {config.GapSyncDistances} sync distances, " +
+                         $"jitter {config.Jitter}): {e.Message}. MES runs UNGATED");
             return false;
         }
 
-        exempt = new HashSet<string>(Split(config.ExemptSpawnTypes));
+        ConfigureExempt(config);
         return true;
     }
+
+    /// <summary>The spawning types left alone; applies at once.</summary>
+    public static void ConfigureExempt(Config config) => exempt = new HashSet<string>(Split(config.ExemptSpawnTypes));
 
     // ReSharper disable InconsistentNaming
     private static void Postfix(object __result, object[] __args, MethodBase __originalMethod)

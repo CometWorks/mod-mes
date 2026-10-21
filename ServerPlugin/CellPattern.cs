@@ -43,6 +43,21 @@ public sealed class CellPattern
     }
 
     /// <summary>
+    /// The pattern of the config values: <paramref name="gap"/> in metres, or when it is 0,
+    /// <paramref name="gapSyncDistances"/> times the world's <paramref name="syncDistance"/>.
+    /// </summary>
+    public static CellPattern FromSettings(double cellSize, double gap, double gapSyncDistances, double syncDistance, double jitter, long seed) =>
+        new(cellSize, gap > 0 ? gap : gapSyncDistances * syncDistance, jitter, seed);
+
+    /// <summary>
+    /// A short hash of the four parameters. Every node logs it at start: equal fingerprints mean the
+    /// nodes see the same cells, cores and gap bands.
+    /// </summary>
+    public string Fingerprint =>
+        Mix(Mix(Mix(Mix((ulong)BitConverter.DoubleToInt64Bits(CellSize)) ^ (ulong)BitConverter.DoubleToInt64Bits(Gap))
+                ^ (ulong)BitConverter.DoubleToInt64Bits(Jitter)) ^ (ulong)Seed).ToString("x16");
+
+    /// <summary>
     /// The cell whose core contains the point, as a lattice key, or null when the point lies in a gap band.
     /// </summary>
     public (long I, long J, long K)? CoreOf(double x, double y, double z)

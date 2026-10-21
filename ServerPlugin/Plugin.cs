@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using HarmonyLib;
@@ -31,6 +32,12 @@ public class Plugin : IPlugin
 
     // Discovered by the Quasar agent
     public Config PluginConfig { get; private set; }
+
+    // Read once at start, so that the nodes of a cluster cannot drift apart: see MesSpawnGate.Configure
+    private static readonly HashSet<string> PatternSettings = new()
+    {
+        nameof(Config.CellSize), nameof(Config.Gap), nameof(Config.GapSyncDistances), nameof(Config.Jitter), nameof(Config.Seed),
+    };
 
     private Harmony harmony;
     private string configPath;
@@ -92,8 +99,10 @@ public class Plugin : IPlugin
         try
         {
             ConfigStorage.SaveXml(PluginConfig, configPath);
-            if (MesSpawnGate.Active)
-                MesSpawnGate.Configure(PluginConfig);
+            if (PatternSettings.Contains(e.PropertyName))
+                Log.Warning($"{e.PropertyName} changed: the spawn pattern changes at the next start (all nodes must use the same one)");
+            else if (MesSpawnGate.Active)
+                MesSpawnGate.ConfigureExempt(PluginConfig);
         }
         catch (Exception ex)
         {

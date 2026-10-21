@@ -48,7 +48,13 @@ An NPC grid is a top-level grid whose big owners are all NPC identities.
 ## Configuration
 
 `MesCluster.cfg` in the server's data folder, or the plugin's page in Quasar. Every node of a
-cluster must use the same pattern settings.
+cluster must use the same pattern settings: `CellSize`, `Gap`, `GapSyncDistances`, `Jitter` and `Seed`
+are read once at start (a change applies at the next start), the cluster's gap-band slot follows them,
+and each node logs the effective values with a pattern fingerprint, which must be equal on all nodes:
+
+    MES spawn placements gated: cell 40000 m, gap 12000 m (4 x sync distance 3000 m), jitter 0.5, seed 1321, pattern fingerprint ...
+
+The other options apply at once.
 
 | Option | Default | |
 |---|---|---|
@@ -57,7 +63,7 @@ cluster must use the same pattern settings.
 | `Gap` | 0 | metres; 0 = `GapSyncDistances` x sync distance |
 | `GapSyncDistances` | 4 | |
 | `Jitter` | 0.5 | how far sites move off the lattice, fraction of a cell |
-| `Seed` | 1321 | |
+| `Seed` | 1321 | any integer; another seed gives other cells |
 | `PlacementAttempts` | 16 | |
 | `ExemptSpawnTypes` | Creature | MES `SpawningType` names, comma separated |
 | `DensityRadius` | 15000 | metres |
@@ -68,7 +74,8 @@ cluster must use the same pattern settings.
 
 ## Tests
 
-- `Tests/CellPatternTests`: property checks of the cell pattern against a brute-force definition
+- `Tests/CellPatternTests`: property checks of the cell pattern against a brute-force definition, the
+  settings-to-pattern mapping, and that a new seed moves the cores and a wider gap shrinks them
   (`dotnet run -c Release --project Tests/CellPatternTests`).
 - `Tests/ds`: a standalone Magnetar server in a test slot with MES and encounter mods, and a probe
   plugin that fires MES spawn requests and lists the NPC grids. `run.py PLAN [cfg]` runs it, and

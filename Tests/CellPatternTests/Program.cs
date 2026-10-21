@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using MesCluster;
 
 // Property checks of the spawn cell pattern. Exit code 0 = all pass.
@@ -68,6 +69,69 @@ foreach (var pattern in patterns)
         Check(inCore > 0, $"{name}: no point in any core");
     else
         Check(inCore == samples, $"{name}: zero gap must leave no gap band");
+}
+
+// Config: every pattern parameter comes from the plugin's settings, the gap absolute or in sync distances
+Check(CellPattern.FromSettings(40000, 0, 4, 3000, 0.5, 1321).Gap == 12000, "default gap is 4 x the 3000 m sync distance");
+Check(CellPattern.FromSettings(40000, 0, 2.5, 3000, 0.5, 1321).Gap == 7500, "gap of 2.5 sync distances");
+Check(CellPattern.FromSettings(40000, 9000, 4, 3000, 0.5, 1321).Gap == 9000, "an absolute gap overrides the multiple");
+var configured = CellPattern.FromSettings(30000, 0, 3, 2000, 0.25, 77);
+Check(configured.CellSize == 30000 && configured.Gap == 6000 && configured.Jitter == 0.25 && configured.Seed == 77,
+    "cell size, gap, jitter and seed reach the pattern");
+Check(CellPattern.FromSettings(40000, 0, 4, 3000, 0.5, 1321).Fingerprint == new CellPattern(40000, 12000, 0.5, 1321).Fingerprint,
+    "equal settings, equal fingerprint");
+
+// Changing the seed moves the cores; changing the gap shrinks or grows them around the same sites
+{
+    var baseline = new CellPattern(40000, 12000, 0.5, 1321);
+    var reseeded = new CellPattern(40000, 12000, 0.5, 1322);
+    var wider = new CellPattern(40000, 20000, 0.5, 1321);
+    var fingerprints = new[] { baseline, reseeded, wider, new CellPattern(41000, 12000, 0.5, 1321), new CellPattern(40000, 12000, 0.6, 1321) }
+        .Select(p => p.Fingerprint).Distinct().Count();
+    Check(fingerprints == 5, "every parameter changes the fingerprint");
+
+    int movedSites = 0, sites = 0;
+    for (long i = -5; i <= 5; i++)
+    for (long j = -5; j <= 5; j++)
+    for (long k = -5; k <= 5; k++)
+    {
+        baseline.Site(i, j, k, out var ax, out var ay, out var az);
+        reseeded.Site(i, j, k, out var bx, out var by, out var bz);
+        sites++;
+        if (Math.Abs(ax - bx) + Math.Abs(ay - by) + Math.Abs(az - bz) > 1)
+            movedSites++;
+    }
+    Check(movedSites == sites, $"a new seed moves every site ({movedSites}/{sites})");
+
+    int coreChanged = 0, inAnyCore = 0, baseCore = 0, widerCore = 0, wideButNotBase = 0, gapGrew = 0;
+    for (int n = 0; n < samples; n++)
+    {
+        double x = (rng.NextDouble() * 2 - 1) * 1e6, y = (rng.NextDouble() * 2 - 1) * 1e6, z = (rng.NextDouble() * 2 - 1) * 1e6;
+        var a = baseline.CoreOf(x, y, z);
+        var b = reseeded.CoreOf(x, y, z);
+        var w = wider.CoreOf(x, y, z);
+        if (a != null || b != null)
+        {
+            inAnyCore++;
+            if (!Equals(a, b))
+                coreChanged++;
+        }
+        if (a != null)
+            baseCore++;
+        if (w != null)
+        {
+            widerCore++;
+            if (!Equals(w, a))
+                wideButNotBase++;
+        }
+        if (a != null && w == null)
+            gapGrew++;
+    }
+    Console.WriteLine($"seed 1321 -> 1322: {(double)coreChanged / inAnyCore:P1} of the points in a core under either seed change core or fall into a gap; " +
+                      $"gap 12 km -> 20 km: core fraction {(double)baseCore / samples:P1} -> {(double)widerCore / samples:P1}");
+    Check(coreChanged > inAnyCore / 2, $"a new seed moves the cores ({coreChanged}/{inAnyCore} core points changed)");
+    Check(wideButNotBase == 0, $"a wider gap only shrinks each core around the same site ({wideButNotBase} points broke that)");
+    Check(gapGrew > 0 && widerCore < baseCore, "a wider gap turns core points into gap points");
 }
 
 Console.WriteLine(failures == 0 ? "PASS" : $"FAIL: {failures} failures");
