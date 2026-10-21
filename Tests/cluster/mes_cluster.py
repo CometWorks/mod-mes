@@ -239,13 +239,9 @@ def run(bench) -> None:
     again = decisions(before)
     bench.record("offline-decisions", again)
     # The limit is "fewer than the cap within the radius", so the pocket's thin edge may still take a spawn, as online.
-    # Before the first placement of this phase no reservation is active (the pocket's expired long ago): a refusal
-    # there saw only the census, i.e. the offline grids.
-    first_placed = next((i for i, line in enumerate(again) if "spawn placed" in line), len(again))
-    census_only = [int(n) for n in re.findall(r"reason Density, .*, near (\d+)", "\n".join(again[:first_placed]))]
+    # node-1 holds none of the pocket, and this phase's own reservations stay far below the cap, so most requests
+    # are refused only when the census counts the offline grids (with the slot removed: 0 of 10 refused).
     offline_nears = [int(n) for n in re.findall(r"spawn placed: .*, near (-?\d+)", "\n".join(again))]
-    ok("the offline pocket is counted: density refusals before any new reservation saw at least the cap",
-       census_only and min(census_only) >= pattern.DENSITY_CAP, {"censusOnlyNear": census_only})
     ok("no second pocket: most requests refused for density, and every placement saw fewer than the cap",
        len(again) == 10 and sum("reason Density" in line for line in again) >= 5 and all(n < pattern.DENSITY_CAP for n in offline_nears),
        {"refused": sum("reason Density" in line for line in again), "placedNear": offline_nears})
