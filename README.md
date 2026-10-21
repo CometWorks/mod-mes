@@ -73,3 +73,5 @@ cluster must use the same pattern settings.
 - `Tests/ds`: a standalone Magnetar server in a test slot with MES and encounter mods, and a probe
   plugin that fires MES spawn requests and lists the NPC grids. `run.py PLAN [cfg]` runs it, and
   `check.py guard|gate` judges the result.
+- `Tests/check_placements.py LOG...`: checks the decisions in any DS logs, e.g. of every node of a
+  cluster: every placed spawn start in a cell core, refusals by reason, Critical fallbacks.
