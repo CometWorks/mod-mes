@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text;
 using Sandbox.Engine.Physics;
 using Sandbox.Game.Entities;
+using Sandbox.Game.Screens.Helpers;
 using Sandbox.Game.World;
 using VRage.Plugins;
 using VRageMath;
@@ -14,18 +15,25 @@ namespace MesClusterProbe;
 
 /// <summary>
 /// Test hooks of the MES Cluster tests. Runs the plan in the file named by MESPROBE_PLAN once the session
-/// is ready, one line per step, and appends what it saw to MESPROBE_OUT:
+/// is ready, one line per step, and appends what it saw to MESPROBE_OUT. Lines appended to the plan later
+/// run as they arrive, so a test can drive it step by step. On a cluster it runs only on the node named
+/// by MESPROBE_NODE (CLUSTER_NODE_ID), and "{node}" in MESPROBE_OUT is replaced by the node id.
 ///   spawn TYPE COUNT X Y Z SPREAD   COUNT MES spawn requests of SpawningType TYPE, each from a "player"
 ///                                   position drawn uniformly within SPREAD metres of (X, Y, Z)
 ///   wait SECONDS                    let the game run (prefabs spawn over several frames)
-///   census LABEL                    one line per NPC grid: census LABEL id x y z inGap
+///   census LABEL                    one line per NPC grid of this process: census LABEL id x y z inGap name
+///   count LABEL X Y Z RADIUS        what MES Cluster's census slot answers: count LABEL n (n/a without it)
+///   owners LABEL                    one line per top-level grid: owners LABEL id name [owner:npc:identity:faction,...]
+///   save                            saves the world (as the DS would), writes "saved" when the files are written
 ///   done                            writes "done" and stops
 /// Calls SpawnRequest.CalculateSpawn by reflection (forceSpawn: no MES timeouts; adminSpawn: no MES
 /// area caps, so only MES Cluster's own limits apply).
 /// </summary>
 public class Probe : IPlugin
 {
+    private string planPath;
     private string[] plan;
+    private long planLength = -1;
     private int step;
     private DateTime resumeAt = DateTime.MaxValue;
     private StreamWriter output;
@@ -35,16 +43,29 @@ public class Probe : IPlugin
     {
         var planPath = Environment.GetEnvironmentVariable("MESPROBE_PLAN");
         var outPath = Environment.GetEnvironmentVariable("MESPROBE_OUT");
-        if (planPath == null || outPath == null)
+        var node = Environment.GetEnvironmentVariable("CLUSTER_NODE_ID");
+        var only = Environment.GetEnvironmentVariable("MESPROBE_NODE");
+        if (planPath == null || outPath == null || (only != null && node != only))
             return;
-        plan = File.ReadAllLines(planPath).Where(l => l.Trim().Length > 0 && !l.StartsWith("#")).ToArray();
-        output = new StreamWriter(outPath, append: true) { AutoFlush = true };
+        this.planPath = planPath;
+        plan = Array.Empty<string>();
+        output = new StreamWriter(outPath.Replace("{node}", node ?? "standalone"), append: true) { AutoFlush = true };
     }
 
     public void Update()
     {
-        if (plan == null || step >= plan.Length || MySession.Static is not { Ready: true })
+        if (planPath == null || MySession.Static is not { Ready: true })
             return;
+        if (step >= plan.Length)
+        {
+            long length = new FileInfo(planPath).Length;
+            if (length == planLength)
+                return;
+            planLength = length;
+            plan = File.ReadAllLines(planPath).Where(l => l.Trim().Length > 0 && !l.StartsWith("#")).ToArray();
+            if (step >= plan.Length)
+                return;
+        }
         if (resumeAt == DateTime.MaxValue)
             resumeAt = DateTime.UtcNow.AddSeconds(30); // MES initialises in its first session updates
         if (DateTime.UtcNow < resumeAt)
@@ -58,6 +79,9 @@ public class Probe : IPlugin
                 case "spawn": Spawn(words); break;
                 case "wait": resumeAt = DateTime.UtcNow.AddSeconds(D(words[1])); break;
                 case "census": Census(words[1]); break;
+                case "count": CountSlot(words); break;
+                case "owners": Owners(words[1]); break;
+                case "save": MyAsyncSaving.Start(() => output.WriteLine("saved")); break;
                 case "done": output.WriteLine("done"); break;
             }
         }
@@ -111,6 +135,32 @@ public class Probe : IPlugin
         }
         output.Write(text.ToString());
         output.WriteLine($"census-end {label}");
+    }
+
+    private void Owners(string label)
+    {
+        var text = new StringBuilder();
+        foreach (var entity in MyEntities.GetEntities())
+        {
+            if (entity is not MyCubeGrid grid || grid.Closed || MyGridPhysicalHierarchy.Static.GetRoot(grid) != grid)
+                continue;
+            var owners = grid.BigOwners.Select(o =>
+            {
+                var identity = MySession.Static.Players.TryGetIdentity(o);
+                var faction = MySession.Static.Factions.TryGetPlayerFaction(o);
+                return $"{o}:{(MySession.Static.Players.IdentityIsNpc(o) ? "npc" : "-")}:{identity?.DisplayName?.Replace(' ', '_') ?? "?"}:{faction?.Tag ?? "-"}";
+            });
+            text.AppendLine($"owners {label} {grid.EntityId} {grid.DisplayName?.Replace(' ', '_')} [{string.Join(",", owners)}]");
+        }
+        output.Write(text.ToString());
+        output.WriteLine($"owners-end {label}");
+    }
+
+    private void CountSlot(string[] words)
+    {
+        var census = AppDomain.CurrentDomain.GetData("CometWorks.Cluster.NpcCensus.v1") as Func<double, double, double, double, int>;
+        string n = census == null ? "n/a" : census(D(words[2]), D(words[3]), D(words[4]), D(words[5])).ToString(CultureInfo.InvariantCulture);
+        output.WriteLine($"count {words[1]} {n}");
     }
 
     private static double D(string s) => double.Parse(s, CultureInfo.InvariantCulture);

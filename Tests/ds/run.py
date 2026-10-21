@@ -33,6 +33,10 @@ EMPTY_WORLD = DS64.parent / "Content/CustomWorlds/Empty World"
 TASK = os.environ.get("MES_TASK", "mes-1321")
 ROOT = HOME / ".se-test" / f"{TASK}-ds0"
 TIMEOUT = float(os.environ.get("MES_TIMEOUT", "2400"))
+# MES_WORLD: load this world folder as it is instead of the Empty World with MODS (seed_world.py)
+SOURCE_WORLD = Path(os.environ["MES_WORLD"]) if os.environ.get("MES_WORLD") else None
+# MES_GATE=0: the probe only, without MES Cluster
+GATE = os.environ.get("MES_GATE", "1") != "0"
 SERVER_GIB = 5.0
 
 PLUGIN_ID = re.search(r"<Id>([^<]+)</Id>", (REPO / "MesCluster.xml").read_text()).group(1)
@@ -80,12 +84,12 @@ def prepare(ports: dict[str, int], plan: Path, plugin_cfg: Path | None) -> Path:
         'xmlns:xsd="http://www.w3.org/2001/XMLSchema"><ShowWarning>false</ShowWarning><LocalHubSources />'
         "<RemoteHubSources><RemoteHub><Name>MagnetarHub</Name><Repo>CometWorks/magnetar-hub</Repo><Branch>main</Branch>"
         "<Enabled>true</Enabled><Trusted>true</Trusted></RemoteHub></RemoteHubSources><RemotePluginSources /><LocalPluginSources>"
-        f"<LocalPlugin><Name>mes-cluster</Name><Folder>{REPO}</Folder><File>MesCluster.xml</File><Enabled>true</Enabled></LocalPlugin>"
-        f"<LocalPlugin><Name>mes-probe</Name><Folder>{REPO / 'Tests/probe'}</Folder><File>MesClusterProbe.xml</File><Enabled>true</Enabled></LocalPlugin>"
+        + (f"<LocalPlugin><Name>mes-cluster</Name><Folder>{REPO}</Folder><File>MesCluster.xml</File><Enabled>true</Enabled></LocalPlugin>" if GATE else "")
+        + f"<LocalPlugin><Name>mes-probe</Name><Folder>{REPO / 'Tests/probe'}</Folder><File>MesClusterProbe.xml</File><Enabled>true</Enabled></LocalPlugin>"
         "</LocalPluginSources><ModSources /></SourcesConfig>\n"
     )
     folders = "".join(
-        f"<LocalFolderConfig><Id>{i}</Id><DebugBuild>false</DebugBuild></LocalFolderConfig>" for i in (PLUGIN_ID, PROBE_ID)
+        f"<LocalFolderConfig><Id>{i}</Id><DebugBuild>false</DebugBuild></LocalFolderConfig>" for i in ((PLUGIN_ID, PROBE_ID) if GATE else (PROBE_ID,))
     )
     (config / "Profiles/Current.xml").write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n<Profile xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
@@ -94,18 +98,22 @@ def prepare(ports: dict[str, int], plan: Path, plugin_cfg: Path | None) -> Path:
     )
 
     world = data / "Saves/MesTest"
-    shutil.copytree(EMPTY_WORLD, world)
-    mods = "".join(
-        f'<ModItem FriendlyName="{name}"><Name>{wid}.sbm</Name><PublishedFileId>{wid}</PublishedFileId>'
-        "<PublishedServiceName>Steam</PublishedServiceName></ModItem>"
-        for wid, name in MODS.items()
-    )
-    for name in ("Sandbox.sbc", "Sandbox_config.sbc"):
-        text = (world / name).read_text(encoding="utf-8-sig")
-        text = text.replace("<Mods />", f"<Mods>{mods}</Mods>", 1)
-        # The Octahedron world's sync distance: MES Cluster's default gap is 4 x this
-        text = re.sub(r"<SyncDistance>\d+</SyncDistance>", "<SyncDistance>3000</SyncDistance>", text)
-        (world / name).write_text(text, encoding="utf-8")
+    if SOURCE_WORLD:
+        shutil.copytree(SOURCE_WORLD, world, ignore=shutil.ignore_patterns("Backup"))
+    else:
+        shutil.copytree(EMPTY_WORLD, world)
+        mods = "".join(
+            f'<ModItem FriendlyName="{name}"><Name>{wid}.sbm</Name><PublishedFileId>{wid}</PublishedFileId>'
+            "<PublishedServiceName>Steam</PublishedServiceName></ModItem>"
+            for wid, name in MODS.items()
+        )
+        for name in ("Sandbox.sbc", "Sandbox_config.sbc"):
+            text = (world / name).read_text(encoding="utf-8-sig")
+            text = text.replace("<Mods />", f"<Mods>{mods}</Mods>", 1)
+            # The Octahedron world's sync distance (MES Cluster's default gap is 4 x this); the Empty World has none
+            text = re.sub(r"<SyncDistance>\d+</SyncDistance>", "", text)
+            text = re.sub(r"(<ViewDistance>\d+</ViewDistance>)", r"\1<SyncDistance>3000</SyncDistance>", text, count=1)
+            (world / name).write_text(text, encoding="utf-8")
     (world / "Sandbox.sbsB5").unlink(missing_ok=True)
     (world / "SANDBOX_0_0_0_.sbsB5").unlink(missing_ok=True)
 
