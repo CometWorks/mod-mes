@@ -98,5 +98,5 @@ public class Config : PluginConfig
     {
         get;
         set => SetField(ref field, value);
-    } = "";
+    } = "b6de8061483bbd9a";
 }

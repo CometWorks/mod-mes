@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Sandbox.Engine.Physics;
 using Sandbox.Game.Entities;
 using Sandbox.Game.World;
@@ -15,21 +16,43 @@ namespace MesCluster;
 /// <c>Func&lt;double x, double y, double z, double radius, int count&gt;</c>, -1 when the cluster does not
 /// know (no snapshot yet, or a stale one). Called on the game thread; the cluster answers from a local
 /// snapshot.
+///
+/// MES spawns the prefabs of an accepted spawn over the next frames, and the cluster's snapshot lags by
+/// seconds, so every accepted spawn is also counted as a reservation for <see cref="ReservationTime"/>:
+/// two spawns in quick succession cannot both pass a limit the first one filled.
 /// </summary>
 internal static class NpcCensus
 {
     internal const string CensusSlot = "CometWorks.Cluster.NpcCensus.v1";
+
+    private static readonly TimeSpan ReservationTime = TimeSpan.FromSeconds(30);
+    private static readonly List<(Vector3D Position, int Grids, DateTime Expires)> reservations = new();
 
     public static bool ClusterWide => AppDomain.CurrentDomain.GetData(CensusSlot) is Func<double, double, double, double, int>;
 
     /// <summary>NPC grids within <paramref name="radius"/> metres of the point; -1 = unknown.</summary>
     public static int Count(Vector3D point, double radius)
     {
-        if (AppDomain.CurrentDomain.GetData(CensusSlot) is Func<double, double, double, double, int> census)
-            return census(point.X, point.Y, point.Z, radius);
+        int count = AppDomain.CurrentDomain.GetData(CensusSlot) is Func<double, double, double, double, int> census
+            ? census(point.X, point.Y, point.Z, radius)
+            : CountLocal(point, radius);
+        if (count < 0)
+            return count;
 
-        return CountLocal(point, radius);
+        var now = DateTime.UtcNow;
+        reservations.RemoveAll(r => r.Expires <= now);
+        foreach (var reservation in reservations)
+        {
+            if (Vector3D.DistanceSquared(reservation.Position, point) <= radius * radius)
+                count += reservation.Grids;
+        }
+
+        return count;
     }
+
+    /// <summary>Counts a spawn MES is about to make until its grids show up in the census.</summary>
+    public static void Reserve(Vector3D position, int grids) =>
+        reservations.Add((position, grids, DateTime.UtcNow + ReservationTime));
 
     private static int CountLocal(Vector3D point, double radius)
     {

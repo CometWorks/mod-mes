@@ -138,7 +138,7 @@ internal static class MesSpawnGate
                 return;
 
             var config = Plugin.Instance.PluginConfig;
-            var verdict = Check(__result, config, out var cell);
+            var verdict = Check(__result, config, out var cell, out var near);
             int attempts = 1;
 
             // A full cluster stays full wherever MES looks, and an unknown census stays unknown
@@ -154,13 +154,14 @@ internal static class MesSpawnGate
                         if (candidate == null || !(bool)validPath.GetValue(candidate))
                             continue;
 
-                        var candidateVerdict = Check(candidate, config, out var candidateCell);
+                        var candidateVerdict = Check(candidate, config, out var candidateCell, out var candidateNear);
                         if (candidateVerdict == Verdict.Fits)
                         {
                             foreach (var field in pathFields)
                                 field.SetValue(__result, field.GetValue(candidate));
                             cell = candidateCell;
                         }
+                        near = candidateNear;
                         // Keep the most informative refusal: density beats pattern
                         if (candidateVerdict != Verdict.Pattern || verdict == Verdict.Pattern)
                             verdict = candidateVerdict;
@@ -178,7 +179,8 @@ internal static class MesSpawnGate
             if (verdict == Verdict.Fits)
             {
                 if (attempts == 1) Accepted++; else Moved++;
-                Log.Info($"spawn placed: type {type}, cell {cell}, start {Format(start)}, placement {attempts}");
+                NpcCensus.Reserve(start, PrefabCount(__args[2]));
+                Log.Info($"spawn placed: type {type}, cell {cell}, start {Format(start)}, placement {attempts}, near {near}");
                 return;
             }
 
@@ -191,7 +193,7 @@ internal static class MesSpawnGate
                 case Verdict.Cluster: RefusedCluster++; break;
                 default: RefusedUnknown++; break;
             }
-            Log.Info($"spawn refused: type {type}, reason {verdict}, placements {attempts}, last start {Format(start)}");
+            Log.Info($"spawn refused: type {type}, reason {verdict}, placements {attempts}, last start {Format(start)}, near {near}");
         }
         catch (Exception e)
         {
@@ -200,10 +202,12 @@ internal static class MesSpawnGate
         }
     }
 
-    private static Verdict Check(object path, Config config, out (long, long, long)? cell)
+    /// <summary><paramref name="near"/>: NPC grids within DensityRadius, -1 when not counted.</summary>
+    private static Verdict Check(object path, Config config, out (long, long, long)? cell, out int near)
     {
         var start = (Vector3D)startCoords.GetValue(path);
         cell = Pattern.CoreOf(start.X, start.Y, start.Z);
+        near = -1;
 
         if (config.MaxClusterNpcGrids > 0)
         {
@@ -227,7 +231,7 @@ internal static class MesSpawnGate
 
         if (config.MaxNpcGridsInRadius > 0)
         {
-            int near = NpcCensus.Count(start, config.DensityRadius);
+            near = NpcCensus.Count(start, config.DensityRadius);
             if (near < 0)
                 return Verdict.Unknown;
             if (near >= config.MaxNpcGridsInRadius)
@@ -236,6 +240,10 @@ internal static class MesSpawnGate
 
         return Verdict.Fits;
     }
+
+    /// <summary>Grids the spawn group will add: SpawnGroupCollection.PrefabIndexes, at least 1.</summary>
+    private static int PrefabCount(object collection) =>
+        Math.Max(1, (collection?.GetType().GetField("PrefabIndexes")?.GetValue(collection) as System.Collections.ICollection)?.Count ?? 1);
 
     /// <summary>
     /// SHA-256 over the instructions of the patched method and of its caller, with operands resolved to

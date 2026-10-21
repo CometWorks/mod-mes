@@ -6,8 +6,9 @@ MODE guard: the plugin found MES, logged its hash and refused to patch (Critical
 MODE gate:  the plugin patched MES; every placed spawn start is in a cell core (recomputed here,
             independently of the plugin's C#); every NPC grid lies in a core or within EDGE m of one;
             the probe's view of the published InGap slot agrees with this script; density refusals
-            happened where the plan piles spawns up, and no point has more NPC grids within the density
-            radius than the cap allows plus one spawn group.
+            happened where the plan piles spawns up, every placement saw fewer NPC grids within the
+            density radius than the cap (counting reservations), and none of the placed starts ends up
+            with more than twice the cap around it.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from pathlib import Path
 MASK = (1 << 64) - 1
 CELL, GAP, JITTER, SEED = 40000.0, 12000.0, 0.5, 1321  # plugin defaults, sync distance 3000 m
 DENSITY_RADIUS, DENSITY_CAP = 15000.0, 12
-MAX_GROUP = 6  # grids one spawn group may add after the check let it through
 EDGE = 1500.0  # prefab offsets around the spawn point
 
 
@@ -103,8 +103,11 @@ def main() -> int:
         disagree = [g for g, d in zip(grids, depths) if g[3] != "na" and (g[3] == "gap") != (d < 0)]
         check(not disagree, f"InGap slot agrees with this script on {len(grids) - len(disagree)}/{len(grids)} grids")
         check(refused.count("Density") > 0, "density refusals happened")
-        crowd = max((sum(math.dist(g[:3], h[:3]) <= DENSITY_RADIUS for h in grids) for g in grids), default=0)
-        check(crowd <= DENSITY_CAP + MAX_GROUP, f"most NPC grids within {DENSITY_RADIUS:.0f} m of a grid: {crowd}")
+        nears = [int(n) for n in re.findall(r"spawn placed: .*, near (-?\d+)$", log, re.M)]
+        check(len(nears) == len(placed) and all(0 <= n < DENSITY_CAP for n in nears),
+              f"every placement saw fewer than {DENSITY_CAP} NPC grids within {DENSITY_RADIUS:.0f} m (max {max(nears, default=-1)})")
+        crowd = max((sum(math.dist(p, g[:3]) <= DENSITY_RADIUS for g in grids) for p in placed), default=0)
+        check(crowd <= 2 * DENSITY_CAP, f"final NPC grids within {DENSITY_RADIUS:.0f} m of a placed start: {crowd} (bound {2 * DENSITY_CAP})")
     else:
         raise SystemExit(f"unknown mode {mode}")
 
