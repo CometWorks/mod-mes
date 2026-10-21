@@ -25,6 +25,8 @@ namespace MesClusterProbe;
 ///   count LABEL X Y Z RADIUS        what MES Cluster's census slot answers: count LABEL n (n/a without it)
 ///   owners LABEL                    one line per top-level grid: owners LABEL id name [owner:npc:identity:faction,...]
 ///   save                            saves the world (as the DS would), writes "saved" when the files are written
+///   census-off                      removes the cluster's census slot (falsification runs: MES Cluster counts this
+///                                   process only)
 ///   done                            writes "done" and stops
 /// Calls SpawnRequest.CalculateSpawn by reflection (forceSpawn: no MES timeouts; adminSpawn: no MES
 /// area caps, so only MES Cluster's own limits apply).
@@ -82,6 +84,10 @@ public class Probe : IPlugin
                 case "count": CountSlot(words); break;
                 case "owners": Owners(words[1]); break;
                 case "save": MyAsyncSaving.Start(() => output.WriteLine("saved")); break;
+                case "census-off":
+                    AppDomain.CurrentDomain.SetData("CometWorks.Cluster.NpcCensus.v1", null);
+                    output.WriteLine("census-off");
+                    break;
                 case "done": output.WriteLine("done"); break;
             }
         }

@@ -17,8 +17,8 @@ Scenario P2-MES-CLUSTER:
 2. Pocket: 40 MES spawn requests from one site. Every placed start is in a cell core, every NPC grid of
    the registry census lies in a core (or within the prefab margin), and the density limit refuses some.
 3. Offline: the pocket's partitions go offline. The registry and node-1's slot still count the grids, while
-   node-1 itself holds none of them; 10 more requests at the site are all refused for density (no double
-   spawn when a player returns).
+   node-1 itself holds none of them; of 10 more requests at the site most are refused for density, and the
+   few placed ones (at the pocket's thin edge) saw fewer than the cap: no second pocket when a player returns.
 4. Sweep: an NPC grid in a gap band of MES Cluster's pattern (the real InGap slot) and one in a core, with
    npc.unvisitedMinutes=2 and gapRemovalFactor=4: the gap grid goes after ~30 s, the core grid after ~120 s.
    A third, in another gap band with a viewed camera next to it, stays; once the camera is off it goes too.
@@ -54,9 +54,14 @@ PLAN = ROOT / "probe-plan.txt"
 # The world's Workshop mods, extracted (e.g. the content/244850 folder of the standalone run, Tests/ds):
 # cluster processes never download mods, each loads them from its own <data>/Mods/<id>.sbm (T-0290)
 MOD_SOURCE = Path(os.environ.get("MES_MOD_SOURCE", ROOT / "mods"))
-# The Empty World with the mods below and SyncDistance 3000, loaded and saved once by a plain DS (Tests/ds/run.py
-# with plan-seed.txt), so it holds the mods' NPC factions: the same pre-seeding a clean cluster world needs (#1365)
-SEED_WORLD = Path(os.environ.get("MES_SEED_WORLD", Path.home() / ".se-test/mes-1321-ds0/data/Saves/MesTest"))
+# The Empty World with the mods below and SyncDistance 3000, loaded and saved once by a plain DS, so it holds the
+# mods' NPC factions: the same pre-seeding a clean cluster world needs (#1365). Made by
+#   python3 Tests/ds/run.py Tests/cluster/plan-seed.txt && cp -a ~/.se-test/mes-1321-ds0/data/Saves/MesTest SEED_WORLD
+SEED_WORLD = Path(os.environ.get("MES_SEED_WORLD", ROOT / "seeded-world"))
+# Falsification runs, which must FAIL their check: "census-local" removes the cluster's census slot on node-1 before
+# the offline phase (the offline pocket goes uncounted); "unseeded" runs the Empty World without seeding (#1365's
+# dropped founders own the MES grids)
+FALSIFY = os.environ.get("MES_FALSIFY", "")
 OUT = ROOT / "probe-{node}.txt"
 NODE = "node-1"
 POCKET = 40  # spawn requests at one site: enough to fill the density cap around it
@@ -76,15 +81,21 @@ MODS = {
 
 def prepare() -> None:
     subprocess.run([str(REPO / "Tests/cluster/build-local-plugins.sh"), str(PLUGINS)], check=True, stdout=subprocess.DEVNULL)
-    # The world as one plain DS saved it (#1365): a world without the mods' NPC factions makes every cluster process
-    # create them with its own ids, and MES on a node then owns its grids by founders the WA's snapshot removed
-    text = (SEED_WORLD / "Sandbox.sbc").read_text(encoding="utf-8-sig")
-    tags = set(re.findall(r"<Tag>([^<]+)</Tag>", text))
-    missing = {"WRECKS", "SPRTE", "THIE"} - tags
-    if missing:
-        raise SystemExit(f"{SEED_WORLD} lacks the mod NPC factions {sorted(missing)}: seed it first (python3 Tests/ds/run.py Tests/cluster/plan-seed.txt)")
     shutil.rmtree(WORLD, ignore_errors=True)
-    shutil.copytree(SEED_WORLD, WORLD, ignore=shutil.ignore_patterns("Backup", "*.sbcB5", "*.sbsB5"))
+    if FALSIFY == "unseeded":
+        build_unseeded(WORLD)
+    else:
+        # The world as one plain DS saved it (#1365): a world without the mods' NPC factions makes every cluster
+        # process create them with its own ids, and MES on a node then owns its grids by founders the WA's snapshot removed
+        text = (SEED_WORLD / "Sandbox.sbc").read_text(encoding="utf-8-sig")
+        tags = set(re.findall(r"<Tag>([^<]+)</Tag>", text))
+        missing = {"WRECKS", "SPRTE", "THIE"} - tags
+        if missing:
+            raise SystemExit(f"{SEED_WORLD} lacks the mod NPC factions {sorted(missing)}: seed it first (see SEED_WORLD)")
+        world_mods = {int(m) for m in re.findall(r"<PublishedFileId>(\d+)</PublishedFileId>", text)}
+        if "OCT" in tags or not set(MODS) <= world_mods:
+            raise SystemExit(f"{SEED_WORLD} is not the seeded test world (mods {sorted(world_mods)}, factions {sorted(tags)})")
+        shutil.copytree(SEED_WORLD, WORLD, ignore=shutil.ignore_patterns("Backup", "*.sbcB5", "*.sbsB5"))
     PLAN.write_text("")
     for old in ROOT.glob("probe-*.txt"):
         if old != PLAN:
@@ -92,6 +103,20 @@ def prepare() -> None:
     extra = [entry for entry in os.environ.get("CLUSTER_EXTRA_PLUGINS", "").split(",") if entry.strip()]
     os.environ["CLUSTER_EXTRA_PLUGINS"] = ",".join(extra + [f"node:{PLUGINS / 'MesCluster'}", f"node:{PLUGINS / 'MesClusterProbe'}"])
     os.environ.update(MESPROBE_PLAN=str(PLAN), MESPROBE_OUT=str(OUT), MESPROBE_NODE=NODE)
+
+
+def build_unseeded(world: Path) -> None:
+    """The Empty World with MODS and SyncDistance 3000, never loaded: no mod NPC factions in it."""
+    ds64 = Path(os.environ.get("SPACE_ENGINEERS_SERVER", Path.home() / ".steam/steam/steamapps/common/SpaceEngineersDedicatedServer"))
+    shutil.copytree(ds64 / "Content/CustomWorlds/Empty World", world)
+    mods = "".join(f'<ModItem FriendlyName="{name}"><Name>{wid}.sbm</Name><PublishedFileId>{wid}</PublishedFileId>'
+                   "<PublishedServiceName>Steam</PublishedServiceName></ModItem>" for wid, name in MODS.items())
+    for name in ("Sandbox.sbc", "Sandbox_config.sbc"):
+        text = (world / name).read_text(encoding="utf-8-sig").replace("<Mods />", f"<Mods>{mods}</Mods>", 1)
+        text = re.sub(r"(<ViewDistance>\d+</ViewDistance>)", r"\1<SyncDistance>3000</SyncDistance>", text, count=1)
+        (world / name).write_text(text, encoding="utf-8")
+    for stale in world.glob("*.sbsB5"):
+        stale.unlink()
 
 
 def probe(*lines: str) -> None:
@@ -136,11 +161,6 @@ def run(bench) -> None:
     bench.cluster.wait_ready(nodes=processes)
     bench.record("config-setup", bench.cluster.handover_config({"npc.sweepSeconds": "0", "offline.enabled": "false"}))
 
-    # 0. Every process loaded the same NPC factions from the save: the WA's snapshot changes nothing on node-1
-    reconciled = _lines(bench, NODE, r"factions snapshot_reconciled")
-    ok("node-1 created no faction of its own (no faction snapshot removed one)",
-       not [line for line in reconciled if not re.search(r"clients_removed=0\b", line)], reconciled[:3])
-
     # 1. Patched, cluster census in use
     gated = wait_until(lambda: _lines(bench, NODE, r"MES spawn placements gated"), 300, "MES Cluster patched MES on node-1")
     hashed = _lines(bench, NODE, r"MES \S+ found, instruction hash")
@@ -171,11 +191,18 @@ def run(bench) -> None:
     probe("owners pocket", "census pocket")
     out = wait_until(lambda: (lambda o: o if re.search(r"^census-end pocket$", o, re.M) else None)(probe_out()), 60, "probe pocket view")
     held = len(re.findall(r"^census pocket ", out, re.M))
+    # Every process loaded the same NPC factions from the save: the WA's faction snapshot, applied in the first
+    # seconds after "Game ready" (so checked only now), removes none of node-1's factions (#1365)
+    reconciled = _lines(bench, NODE, r"factions snapshot_reconciled")
+    ok("node-1 created no faction of its own (no faction snapshot removed one)",
+       not [line for line in reconciled if not re.search(r"clients_removed=0\b", line)],
+       {"snapshots": len(reconciled), "first": reconciled[:1]})
     owners = re.findall(r"^owners pocket .*$", out, re.M)
     bench.record("owners-pocket", owners)
-    unresolved = [line for line in owners if re.search(r"\[\]|:-:|:\?:", line)]
-    ok("every pocket grid is owned by a known NPC identity of node-1", owners and not unresolved,
-       {"grids": len(owners), "unresolved": unresolved[:3]})
+    # An ownerless grid (debris) is no NPC grid; an owner node-1 doesn't know, or that isn't an NPC, is the #1365 bug
+    unresolved = [line for line in owners if re.search(r":-:|:\?:", line)]
+    ok("every owned pocket grid is owned by a known NPC identity of node-1", owners and not unresolved,
+       {"grids": len(owners), "ownerless": sum(line.endswith("[]") for line in owners), "unresolved": unresolved[:3]})
     require("node-1 holds NPC grids from the pocket", held > 0, held)
     from cluster import ClusterError
     seen: list = [None]
@@ -203,13 +230,25 @@ def run(bench) -> None:
     slot = re.search(r"^count offline (\S+)$", out, re.M).group(1)
     ok("node-1 itself holds none of the pocket's grids (the control: a node-local count sees 0)", local == 0, local)
     ok("node-1's census slot still counts the offline pocket", slot.isdigit() and int(slot) >= pattern.DENSITY_CAP, slot)
+    if FALSIFY == "census-local":
+        probe("census-off")
+        wait_until(lambda: re.search(r"^census-off$", probe_out(), re.M), 60, "the census slot removed")
     before = len(decisions())
     probe(f"spawn RandomEncounter 10 {SITE[0]:.1f} {SITE[1]:.1f} {SITE[2]:.1f} 0")
     wait_until(lambda: len(re.findall(r"^request ", probe_out(), re.M)) >= POCKET + 10, 300, "10 more spawn requests answered")
     again = decisions(before)
     bench.record("offline-decisions", again)
-    ok("no spawn at the offline pocket: every request refused for density",
-                again and all("reason Density" in line for line in again), again[:3])
+    # The limit is "fewer than the cap within the radius", so the pocket's thin edge may still take a spawn, as online.
+    # Before the first placement of this phase no reservation is active (the pocket's expired long ago): a refusal
+    # there saw only the census, i.e. the offline grids.
+    first_placed = next((i for i, line in enumerate(again) if "spawn placed" in line), len(again))
+    census_only = [int(n) for n in re.findall(r"reason Density, .*, near (\d+)", "\n".join(again[:first_placed]))]
+    offline_nears = [int(n) for n in re.findall(r"spawn placed: .*, near (-?\d+)", "\n".join(again))]
+    ok("the offline pocket is counted: density refusals before any new reservation saw at least the cap",
+       census_only and min(census_only) >= pattern.DENSITY_CAP, {"censusOnlyNear": census_only})
+    ok("no second pocket: most requests refused for density, and every placement saw fewer than the cap",
+       len(again) == 10 and sum("reason Density" in line for line in again) >= 5 and all(n < pattern.DENSITY_CAP for n in offline_nears),
+       {"refused": sum("reason Density" in line for line in again), "placedNear": offline_nears})
     bench.record("config-offline-off", bench.cluster.handover_config({"offline.enabled": "false"}))
 
     # 4. Sweep with the real InGap slot: unvisited gap grids go 4x sooner, a visited one stays
@@ -253,7 +292,8 @@ def main() -> int:
     import bench as bench_module
 
     run.world_template = WORLD
-    results = bench_module.HOST.results / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ-mes")
+    label = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ-mes") + (f"-falsify-{FALSIFY}" if FALSIFY else "")
+    results = bench_module.HOST.results / label
     results.mkdir(parents=True, exist_ok=True)
     outcome = bench_module.run_scenario(run, "P2-MES-CLUSTER", "#1321: MES Cluster with the real MES and the cluster's NPC census and sweep",
                                         "3", results)
