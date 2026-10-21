@@ -25,6 +25,8 @@ namespace MesClusterProbe;
 ///   count LABEL X Y Z RADIUS        what MES Cluster's census slot answers: count LABEL n (n/a without it)
 ///   owners LABEL                    one line per top-level grid: owners LABEL id name [owner:npc:identity:faction,...]
 ///   save                            saves the world (as the DS would), writes "saved" when the files are written
+///   freeze                          stops every NPC-owned grid and makes it a station, so that no moving NPC keeps
+///                                   its neighbours' partitions online (writes "frozen N")
 ///   census-off                      removes the cluster's census slot (falsification runs: MES Cluster counts this
 ///                                   process only)
 ///   done                            writes "done" and stops
@@ -84,6 +86,7 @@ public class Probe : IPlugin
                 case "count": CountSlot(words); break;
                 case "owners": Owners(words[1]); break;
                 case "save": MyAsyncSaving.Start(() => output.WriteLine("saved")); break;
+                case "freeze": Freeze(); break;
                 case "census-off":
                     AppDomain.CurrentDomain.SetData("CometWorks.Cluster.NpcCensus.v1", null);
                     output.WriteLine("census-off");
@@ -141,6 +144,25 @@ public class Probe : IPlugin
         }
         output.Write(text.ToString());
         output.WriteLine($"census-end {label}");
+    }
+
+    private void Freeze()
+    {
+        int frozen = 0;
+        foreach (var entity in MyEntities.GetEntities().ToList())
+        {
+            if (entity is not MyCubeGrid grid || grid.Closed || grid.IsStatic || grid.Physics == null)
+                continue;
+            var owners = grid.BigOwners;
+            if (owners.Count == 0 || owners.Any(o => !MySession.Static.Players.IdentityIsNpc(o)))
+                continue;
+            grid.Physics.LinearVelocity = Vector3.Zero;
+            grid.Physics.AngularVelocity = Vector3.Zero;
+            grid.ConvertToStatic();
+            if (grid.IsStatic)
+                frozen++;
+        }
+        output.WriteLine($"frozen {frozen}");
     }
 
     private void Owners(string label)

@@ -217,12 +217,21 @@ def run(bench) -> None:
     ok(f"every NPC grid in the registry census is in a core or within {pattern.EDGE:.0f} m of one",
                 depths and min(depths) >= -pattern.EDGE, f"{len(depths)} grids, worst {min(depths, default=0):.0f} m")
 
-    # 3. Offline: counted while offline, no second pocket
+    # 3. Offline: counted while offline, no second pocket. The registry keeps a partition online while a MOVING one is
+    # near (an MES drone on patrol), so the pocket is made static first: the census counts the same grids either way
+    probe("freeze")
+    frozen = wait_until(lambda: re.findall(r"^frozen (\d+)$", probe_out(), re.M), 60, "the pocket frozen")
+    bench.record("pocket-frozen", frozen)
     total = grids["online"]
     bench.record("config-offline", bench.cluster.handover_config({
         "offline.enabled": "true", "offline.minOnlineSeconds": "0", "offline.graceSeconds": "0"}))
-    offline = wait_until(lambda: (lambda c: c if c["online"] == 0 and c["offline"] >= total else None)(census()), 300,
-                         "the pocket offline")
+    seen = [None]
+    try:
+        offline = wait_until(lambda: (lambda c: seen.__setitem__(0, c) or (c if c["online"] == 0 and c["offline"] >= total else None))(census()),
+                             300, "the pocket offline")
+    except ClusterError:
+        raise AssertionError(f"the pocket did not go offline: census online {seen[0] and seen[0]['online']}, "
+                             f"offline {seen[0] and seen[0]['offline']} of {total}") from None
     bench.record("census-offline", offline)
     probe("census offline", f"count offline {SITE[0]:.1f} {SITE[1]:.1f} {SITE[2]:.1f} 15000")
     out = wait_until(lambda: (lambda o: o if re.search(r"^count offline ", o, re.M) else None)(probe_out()), 60, "probe offline view")
