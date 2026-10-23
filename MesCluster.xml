@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<PluginData
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:type="GitHubPlugin"
+>
+  <!-- The ID of your plugin, never change this -->
+  <Id>168549F4-F6C1-4F5B-9537-2F715563359B</Id>
+
+  <!-- GitHub repository ID -->
+  <RepoId>CometWorks/mod-mes</RepoId>
+
+  <!-- The name of your plugin that will appear in the plugin list -->
+  <FriendlyName>MES Cluster</FriendlyName>
+
+  <!-- The author name that you want to appear in the plugin list -->
+  <Author>CometWorks</Author>
+
+  <!-- Optional tooltip for the plugin in the plugin list -->
+  <Tooltip>Makes Modular Encounters Systems spawn NPCs in separate pockets that a Magnetar cluster can partition</Tooltip>
+
+  <Description>
+        Patches Modular Encounters Systems (MES, Workshop 1521905890) at runtime, without
+        shipping any MES code. MES spawns land only in the cores of Voronoi cells, with empty
+        gap bands between the cores wider than the cluster's partition split distance, so each
+        pocket of NPC grids forms its own partitions that a cluster can balance and take offline.
+        Spawns are also refused where the NPC density, counted cluster-wide including offline
+        partitions when the cluster publishes its census, is over the limit.
+        The plugin checks the MES version and the instructions of the patched methods and
+        stays inactive, with a Critical log line, when they differ from the reviewed ones.
+    </Description>
+
+  <!-- Only source code in the Directory entries listed in SourceDirectories is compiled. Exclude any test projects or similar. -->
+  <SourceDirectories>
+    <Directory>ServerPlugin</Directory>
+  </SourceDirectories>
+
+  <!-- The current plugin version's commit hash -->
+  <Commit>TODO Git commit hash</Commit>
+</PluginData>
